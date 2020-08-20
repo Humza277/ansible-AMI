@@ -1,137 +1,83 @@
-#This is a YAML file to install nginx onto oue web VM using YAML
+# AWS playbook
 
 ---
 
-- hosts: db
+- hosts: aws
+  gather_facts: False
 
-  gather_facts: yes
-
-  become: true
-
-  tasks:
-  - name: install mongodb
-    apt: pkg=mongodb state=present
-
-  - name: Remove mongodb file (delete file)
-    file:
-      path: /etc/mongodb.conf
-      state: absent
-
-  - name: Touch a file, using symbolic modes to set the permissions (equivalent to 0644)
-    file:
-      path: /etc/mongodb.conf
-      state: touch
-      mode: u=rw,g=r,o=r
-
-  - name: Insert multiple lines and Backup
-    blockinfile:
-      path: /etc/mongodb.conf
-      block: |
-        # mongodb.conf
-        storage:
-          dbPath: /var/lib/mongodb
-          journal:
-            enabled: true
-        systemLog:
-          destination: file
-          logAppend: true
-          path: /var/log/mongodb/mongod.log
-
-        net:
-          port: 27017
-          bindIp: 0.0.0.0
-
-
-# where do we want to install
-- hosts: web
-
-# get the facts
-  gather_facts: yes
-
-# changes access to root user
-  become: true
-
-# what do we want ansible to do for us in the playbook
-# In this case our only task is to install nginx
+  vars:
+    key_name: humzaami_aws
+    region: eu-west-1
+    image: ami-01561b0b028f2d8de
+    id: "webappami"
+    sec_group: "sg-056555069e835505d"
+    subnet_id: "subnet-05f8bdd912bcffab9"
 
   tasks:
 
-  - name: Copy web app into web virtual machine
-    synchronize:
-      src: /home/vagrant/app
-      dest: /home/vagrant
+    - name: Facts
+      block:
 
-  - name: Install nginx
-    apt: pkg=nginx state=present
-    become_user: root
+      - name: Get instances facts
+        ec2_instance_facts:
+          aws_access_key: "{{ec2_access_key}}"
+          aws_secret_key: "{{ec2_secret_key}}"
+          region: "{{ region }}"
+        register: result
 
-  - name: Remove nginx deafault file (delete file)
-    file:
-      path: /etc/nginx/sites-enabled/default
-      state: absent
+      - name: Instances ID
+        debug:
+          msg: "ID: {{ item.instance_id }} - State: {{ item.state.name }} - Public DNS: {{ item.public_dns_name }}"
+        loop: "{{ result.instances }}"
 
-  #- name: Copy nginx default file
-   # shell: sudo cp /home/vagrant/app/nginx.conf /etc/nginx/sites-available/default.conf
 
-  - name: Create a symbolic link
-    file:
-      src: /home/vagrant/app/nginx.conf
-      dest: /etc/nginx/sites-available/nginx.conf
-      state: link
-    become_user: root
 
-  - name: nginx bug workaround
-    shell: |
-      sudo mkdir /etc/systemd/system/nginx.service.d
-        printf "[Service]\nExecStartPost=/bin/sleep 0.1\n" | \
-          sudo tee /etc/systemd/system/nginx.service.d/override.conf
-      sudo systemctl daemon-reload
-      sudo systemctl restart nginx
+      tags: always
 
-  - name: Install nodejs
-    apt: pkg=nodejs state=present
 
-# Downloading pm2
-  - name: download latest npm
-    shell: |
-      npm install -g npm@latest
-      npm install mongoose -y
+    - name: Provisioning EC2 instances
+      block:
 
-  - name: Install pm2
-    npm:
-      name: pm2
-      global: yes
+      - name: Upload public key to AWS
+        ec2_key:
+          name: "{{ key_name }}"
+          key_material: "{{ lookup('file', '~/.ssh/{{ key_name }}.pub') }}"
+          region: "{{ region }}"
+          aws_access_key: "{{ec2_access_key}}"
+          aws_secret_key: "{{ec2_secret_key}}"
 
-  - name: export db host variable for database
-    shell: echo "DB_HOST=mongodb://192.168.33.11:27017/posts" >> ~/.bashrc
+      - name: Provision instance(s)
+        ec2:
+          aws_access_key: "{{ec2_access_key}}"
+          aws_secret_key: "{{ec2_secret_key}}"
+          assign_public_ip: true
+          key_name: "{{ key_name }}"
+          id: "{{ id }}"
+          group_id: "{{ sec_group }}"
+          vpc_subnet_id: "{{ subnet_id }}"
+          image: "{{ image }}"
+          instance_type: t2.micro
+          region: "{{ region }}"
+          wait: true
+          count: 1
+          # exact_count: 2
+          count_tag:
+            instance_tags:
+              Name: "{{ id }}"
 
-  - name: Stop pm2
-    shell: pm2 stop all
-    args:
-      chdir: /home/vagrant/app/
-    ignore_errors: yes
+      tags: ['never', 'create_ec2']
 
-  - name: Install Forever
-    npm:
-      name: forever
-      global: yes
 
-  - name: NODE | Seed Posts
-    shell: node seed.js
-    args:
-      chdir: /home/vagrant/app/seeds
 
-  - name: Install npm updates
-    shell: npm install
-    args:
-      chdir: /home/vagrant/app
 
-  - name: start app -shell
-    shell:
-      cmd: . ~/.bashrc && forever start app.js
-      chdir: /home/vagrant/app
 
-  - name: node seeds -shell
-    shell:
-      cmd: . ~/.bashrc && node seed.js
-      chdir: /home/vagrant/app/seeds
+
+
+
+
+
+
+
+
+
+
